@@ -1,0 +1,142 @@
+var roi = ee.FeatureCollection("projects/ee-sabbirhossainshah/assets/Ishwardi");
+// Load the WorldCover land use/land cover dataset
+var lulc = ee.ImageCollection("ESA/WorldCover/v100").first();
+
+Map.centerObject(roi,10);
+Map.addLayer(roi,{},'Ishwardi');
+// Load the MODIS NDVI dataset and filter by date and region
+var ndvi_coll = ee.ImageCollection("MODIS/061/MOD13Q1")
+  .filter(ee.Filter.or(
+    ee.Filter.date('2019-01-01', '2019-05-30'),
+    ee.Filter.date('2020-01-01', '2020-05-30'),
+    ee.Filter.date('2021-01-01', '2021-05-30'),
+    ee.Filter.date('2022-01-01', '2022-05-30')
+  ))
+  .filterBounds(roi)
+  .select('NDVI');
+
+print('NDVI Collection:', ndvi_coll);
+
+// Define NDVI processing function
+var ndvi = function (img) {
+  var ndvi_mod = img.select('NDVI').multiply(0.0001).updateMask(lulc.eq(40)).clip(roi);
+  return ndvi_mod.copyProperties(img, ['system:index', 'system:time_end', 'system:time_start']);
+};
+
+// Apply the function to the NDVI collection
+var ndvi_coll_final = ndvi_coll.map(ndvi);
+print('Processed NDVI Collection:', ndvi_coll_final);
+
+// Convert the NDVI collection to bands
+var ndvi_bands = ndvi_coll_final.toBands();
+
+// Reduce NDVI collection to region statistics
+var ndvi_stats = ndvi_bands.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 250
+});
+
+// Export NDVI statistics
+Export.table.toDrive({
+  description: 'ndvi-stats',
+  collection: ndvi_stats.select(['.*'], null, false),
+  fileFormat: 'CSV'
+});
+
+// Filter NDVI images for specific dates
+var ndvi_img = ndvi_coll_final.filter(ee.Filter.eq('system:index', '2022_03_06')).first();
+var ndvi_img1 = ndvi_coll_final.filter(ee.Filter.eq('system:index', '2020_03_05')).first();
+
+// Visualize NDVI images
+var ndviPalette = ['0000ff', 'BA3840', 'D1B58D', 'FFFF00', 'FFD600', 'FEA500', '7FFED1',
+  '80FF00', '00FF01', '016300', '099EF2', '9E21EF'];
+
+Map.addLayer(ndvi_img, { palette: ndviPalette, min: 0, max: 1 }, 'NDVI_06-03-2022');
+Map.addLayer(ndvi_img1, { palette: ndviPalette, min: 0, max: 1 }, 'NDVI_05-03-2020');
+
+// Create a chart for NDVI
+var chart_ndvi = ui.Chart.image.doySeriesByYear({
+  imageCollection: ndvi_coll_final,
+  bandName: 'NDVI',
+  region: roi.geometry().bounds(),
+  regionReducer: ee.Reducer.mean(),
+  scale: 250,
+  sameDayReducer: ee.Reducer.mean(),
+  startDay: 1,
+  endDay: 365
+});
+print(chart_ndvi);
+
+// Load the MODIS LST dataset and filter by date and region
+var lst_coll = ee.ImageCollection("MODIS/061/MOD11A2")
+  .filter(ee.Filter.or(
+    ee.Filter.date('2019-01-01', '2019-05-30'),
+    ee.Filter.date('2020-01-01', '2020-05-30'),
+    ee.Filter.date('2021-01-01', '2021-05-30'),
+    ee.Filter.date('2022-01-01', '2022-05-30')
+  ))
+  .filterBounds(roi)
+  .select('LST_Day_1km');
+
+print('LST Collection:', lst_coll);
+
+// Define LST processing function
+var lst_deg_coll = function (img) {
+  var lst_deg = img.select('LST_Day_1km').multiply(0.02).subtract(273.15).updateMask(lulc.eq(40)).clip(roi);
+  return lst_deg.copyProperties(img, ['system:index', 'system:time_end', 'system:time_start']);
+};
+
+// Apply the function to the LST collection
+var lst_coll_final = lst_coll.map(lst_deg_coll);
+print('Processed LST Collection:', lst_coll_final);
+
+// Convert the LST collection to bands
+var lst_bands = lst_coll_final.toBands();
+
+// Reduce LST collection to region statistics
+var lst_stats = lst_bands.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 1000
+});
+
+// Export LST statistics
+Export.table.toDrive({
+  description: 'lst-stats',
+  collection: lst_stats.select(['.*'], null, false),
+  fileFormat: 'CSV'
+});
+
+// Filter LST images for specific dates
+var lst_img = lst_coll_final.filter(ee.Filter.eq('system:index', '2022_04_07')).first();
+var lst_img1 = lst_coll_final.filter(ee.Filter.eq('system:index', '2020_04_06')).first();
+
+// Visualize LST images
+var viz = {
+  min: -13.15,
+  max: 56.85,
+  palette: [
+    '040274', '040281', '0502a3', '0502b8', '0502ce', '0502e6',
+    '0602ff', '235cb1', '307ef3', '269db1', '30c8e2', '32d3ef',
+    '3be285', '3ff38f', '86e26f', '3ae237', 'b5e22e', 'd6e21f',
+    'fff705', 'ffd611', 'ffb613', 'ff8b13', 'ff6e08', 'ff500d',
+    'ff0000', 'de0101', 'c21301', 'a71001', '911003'
+  ],
+};
+
+Map.addLayer(lst_img, viz, 'LST_2022_04_07');
+Map.addLayer(lst_img1, viz, 'LST_2020_04_06');
+
+// Create a chart for LST
+var chart_lst = ui.Chart.image.doySeriesByYear({
+  imageCollection: lst_coll_final,
+  bandName: 'LST_Day_1km',
+  region: roi,
+  regionReducer: ee.Reducer.mean(),
+  scale: 1000,
+  sameDayReducer: ee.Reducer.mean(),
+  startDay: 1,
+  endDay: 365
+});
+print(chart_lst);
