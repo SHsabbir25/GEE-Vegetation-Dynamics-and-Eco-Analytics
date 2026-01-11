@@ -1,0 +1,164 @@
+// Monitoring Chlorophyll-a & Vegetation Indices Using Sentinel-2A in Google Earth Engine
+var geometry = 
+    /* color: #0b4a8b */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-122.15989640794544, 47.267320393332575],
+          [-122.15989640794544, 47.17638351341411],
+          [-121.92540696702747, 47.17638351341411],
+          [-121.92540696702747, 47.267320393332575]]], null, false);
+// 1. Define the Region of Interest (ROI)
+var roi = ee.Geometry.Polygon([
+  [-122.1794795283856, 47.294253636276125],
+  [-122.1794795283856, 47.162294613623935],
+  [-121.90619461627622, 47.162294613623935],
+  [-121.90619461627622, 47.294253636276125]
+]);
+
+// 2. Center the map on ROI
+Map.centerObject(roi, 12);
+Map.addLayer(roi, {color: 'red'}, 'Study Area');
+
+// 3. Define the Time Range
+var startYear = '2017-01-01';
+var endYear = '2024-12-31';
+
+// 4. Load Sentinel-2A Image Collection
+var s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+  .filterDate(startYear, endYear)
+  .filterBounds(roi)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20)) // Remove cloudy images
+  .map(function(image) {
+    var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI'); // Normalized Difference Vegetation Index
+    var ci = image.expression('(B5 / B4) - 1', {
+      'B5': image.select('B5'),
+      'B4': image.select('B4')
+    }).rename('Chlorophyll_Index'); // Chlorophyll Index (CI)
+    
+    var evi = image.expression('2.5 * ((B8 - B4) / (B8 + 6 * B4 - 7.5 * B2 + 1))', {
+      'B8': image.select('B8'),
+      'B4': image.select('B4'),
+      'B2': image.select('B2')
+    }).rename('EVI'); // Enhanced Vegetation Index (EVI)
+    
+    var reci = image.expression('(B7 / B5) - 1', {
+      'B7': image.select('B7'),
+      'B5': image.select('B5')
+    }).rename('RECI'); // Red Edge Chlorophyll Index (RECI)
+    
+    return image.addBands([ndvi, ci, evi, reci]).copyProperties(image, ['system:time_start']);
+  });
+
+// 4. Create Time-Series Analysis Charts
+print(ui.Chart.image.series({
+  imageCollection: s2Collection.select('NDVI'),
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 500,
+  xProperty: 'system:time_start'
+}).setOptions({
+  title: 'NDVI Time-Series (2017-2024)',
+  vAxis: {title: 'NDVI'},
+  hAxis: {title: 'Year'},
+  colors: ['green']
+}));
+
+print(ui.Chart.image.series({
+  imageCollection: s2Collection.select('Chlorophyll_Index'),
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 500,
+  xProperty: 'system:time_start'
+}).setOptions({
+  title: 'Chlorophyll Index Time-Series (2017-2024)',
+  vAxis: {title: 'CI'},
+  hAxis: {title: 'Year'},
+  colors: ['blue']
+}));
+
+print(ui.Chart.image.series({
+  imageCollection: s2Collection.select('EVI'),
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 500,
+  xProperty: 'system:time_start'
+}).setOptions({
+  title: 'EVI Time-Series (2017-2024)',
+  vAxis: {title: 'EVI'},
+  hAxis: {title: 'Year'},
+  colors: ['red']
+}));
+
+print(ui.Chart.image.series({
+  imageCollection: s2Collection.select('RECI'),
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 500,
+  xProperty: 'system:time_start'
+}).setOptions({
+  title: 'RECI Time-Series (2017-2024)',
+  vAxis: {title: 'RECI'},
+  hAxis: {title: 'Year'},
+  colors: ['purple']
+}));
+
+// 5. Extract and Visualize Indices for 2020
+var indices2020 = s2Collection.filterDate('2020-01-01', '2020-12-31').mean().clip(roi);
+
+// 6. Visualization Parameters
+var ndviVis = {min: 0, max: 1, palette: ['brown', 'yellow', 'green']};
+var ciVis = {min: 0, max: 1, palette: ['blue', 'cyan', 'green']};
+var eviVis = {min: 0, max: 1, palette: ['red', 'orange', 'yellow']};
+var reciVis = {min: 0, max: 1, palette: ['purple', 'pink', 'white']};
+
+// 7. Add Layers to Map
+Map.addLayer(indices2020.select('NDVI'), ndviVis, 'NDVI - 2020');
+Map.addLayer(indices2020.select('Chlorophyll_Index'), ciVis, 'Chlorophyll Index - 2020');
+Map.addLayer(indices2020.select('EVI'), eviVis, 'EVI - 2020');
+Map.addLayer(indices2020.select('RECI'), reciVis, 'RECI - 2020');
+
+// 8. Export 2020 Index Images
+Export.image.toDrive({
+  image: indices2020.select('NDVI'),
+  description: 'NDVI_2020',
+  scale: 10,
+  region: roi,
+  maxPixels: 1e13,
+  folder: 'Chlorophyll_Vegetation_Analysis',
+  crs: 'EPSG:4326'
+});
+
+Export.image.toDrive({
+  image: indices2020.select('Chlorophyll_Index'),
+  description: 'Chlorophyll_Index_2020',
+  scale: 10,
+  region: roi,
+  maxPixels: 1e13,
+  folder: 'Chlorophyll_Vegetation_Analysis',
+  crs: 'EPSG:4326'
+});
+
+Export.image.toDrive({
+  image: indices2020.select('EVI'),
+  description: 'EVI_2020',
+  scale: 10,
+  region: roi,
+  maxPixels: 1e13,
+  folder: 'Chlorophyll_Vegetation_Analysis',
+  crs: 'EPSG:4326'
+});
+
+Export.image.toDrive({
+  image: indices2020.select('RECI'),
+  description: 'RECI_2020',
+  scale: 10,
+  region: roi,
+  maxPixels: 1e13,
+  folder: 'Chlorophyll_Vegetation_Analysis',
+  crs: 'EPSG:4326'
+});
