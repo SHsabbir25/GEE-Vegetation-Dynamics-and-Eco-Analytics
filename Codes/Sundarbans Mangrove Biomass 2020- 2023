@@ -1,0 +1,167 @@
+var roi = ee.FeatureCollection("projects/ee-sabbirhossainshah/assets/Sundarbans_Boundary");
+// Load mangrove dataset
+var dataset = ee.ImageCollection('LANDSAT/MANGROVE_FORESTS');                                  
+var mangrovesVis = {
+  min: 0,
+  max: 1.0,
+  palette: ['d40115'],
+};
+
+// Set the center of the map                                                       
+Map.centerObject(roi,8);
+Map.addLayer(roi,{},'Sundarbans');
+
+// Add mangroves layer
+Map.addLayer(dataset, mangrovesVis, 'Mangroves');
+
+// Add Sentinel-2 imagery for 2020                                                               
+var sentinel2020 = ee.ImageCollection('COPERNICUS/S2')
+  .filterDate('2020-01-01', '2020-12-31')
+  .filterBounds(roi)
+  .median()
+  .clip(roi);
+var sentinelVis = {
+  bands: ['B4', 'B3', 'B2'], // Red, Green, Blue bands
+  min: 0,
+  max: 3000,
+  gamma: 1.4,
+};
+Map.addLayer(sentinel2020, sentinelVis, 'Sentinel-2 2020');                      
+
+// Add Sentinel-2 imagery for 2023                                                                                         
+var sentinel2023 = ee.ImageCollection('COPERNICUS/S2')
+  .filterDate('2023-01-01', '2023-12-31')
+  .filterBounds(roi)
+  .median()
+  .clip(roi);
+Map.addLayer(sentinel2023, sentinelVis, 'Sentinel-2 2023');
+
+// Calculate NDVI for 2020                                                                                                           
+var ndvi2020 = sentinel2020.normalizedDifference(['B8', 'B4']).rename('NDVI_2020');
+var ndviVis = {
+  min: -1,
+  max: 1,
+  palette: ['blue', 'white', 'green'],
+};
+Map.addLayer(ndvi2020, ndviVis, 'NDVI 2020');
+
+// Calculate NDVI for 2023                                                                                                          
+var ndvi2023 = sentinel2023.normalizedDifference(['B8', 'B4']).rename('NDVI_2023');
+Map.addLayer(ndvi2023, ndviVis, 'NDVI 2023');
+
+// Calculate NDVI change (2023 - 2020)                                                                                                                                                       
+var ndviChange = ndvi2023.subtract(ndvi2020).rename('NDVI_Change');
+var ndviChangeVis = {
+  min: -0.5,
+  max: 0.5,
+  palette: ['red', 'white', 'green'], // Red for decrease, Green for increase
+};
+Map.addLayer(ndviChange, ndviChangeVis, 'NDVI Change (2020-2023)');
+
+// Thresholds for significant changes                                                                                                                                                                              
+var lossThreshold = -0.2; // Significant vegetation loss
+var gainThreshold = 0.2;  // Significant vegetation gain
+
+// Create binary images for loss, gain, and no change                                                                                                                     
+var vegetationLoss = ndviChange.lt(lossThreshold).selfMask();
+var vegetationGain = ndviChange.gt(gainThreshold).selfMask();
+var noChange = ndviChange.gte(lossThreshold).and(ndviChange.lte(gainThreshold)).selfMask();
+
+// Convert binary images to vector polygons (with geometry parameter)                              
+var lossVectors = vegetationLoss.reduceToVectors({
+  geometry: roi,  // ADDED CRUCIAL GEOMETRY PARAMETER
+  geometryType: 'polygon',
+  reducer: ee.Reducer.countEvery(),
+  scale: 10,
+  maxPixels: 1e8
+}).map(function(feature) {
+  return feature.set('change', 'loss');
+});
+
+var gainVectors = vegetationGain.reduceToVectors({
+  geometry: roi,  // ADDED CRUCIAL GEOMETRY PARAMETER
+  geometryType: 'polygon',
+  reducer: ee.Reducer.countEvery(),
+  scale: 10,
+  maxPixels: 1e8
+}).map(function(feature) {
+  return feature.set('change', 'gain');
+});
+
+var noChangeVectors = noChange.reduceToVectors({
+  geometry: roi,  // ADDED CRUCIAL GEOMETRY PARAMETER
+  geometryType: 'polygon',
+  reducer: ee.Reducer.countEvery(),
+  scale: 10,
+  maxPixels: 1e8
+}).map(function(feature) {
+  return feature.set('change', 'no_change');
+});
+
+// Merge the loss, gain, and no change vectors into a single FeatureCollection
+var allChanges = lossVectors.merge(gainVectors).merge(noChangeVectors);
+
+// Display the change vectors
+Map.addLayer(allChanges, {color: 'FF0000'}, 'Change Detection Vectors');
+
+// Export the FeatureCollection as a shapefile
+Export.table.toDrive({
+  collection: allChanges,
+  description: 'NDVI_Change_Detection_2020_2023',
+  fileFormat: 'SHP'
+});
+
+// Create a legend
+function createLegend() {
+  var legend = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px 15px'
+    }
+  });
+  
+  var legendTitle = ui.Label({
+    value: 'Change Detection Legend',
+    style: {
+      fontWeight: 'bold',
+      fontSize: '16px',
+      margin: '0 0 4px 0',
+      padding: '0'
+    }
+  });
+  
+  legend.add(legendTitle);
+
+  // Color legend: loss, gain, no change
+  var changeTypes = [
+    {color: 'FF0000', label: 'Loss'},
+    {color: '00FF00', label: 'Gain'},
+    {color: '808080', label: 'No Change'}
+  ];
+
+  changeTypes.forEach(function(type) {
+    var colorBox = ui.Label({
+      style: {
+        backgroundColor: '#' + type.color,
+        padding: '10px',
+        margin: '0 0 4px 0'
+      }
+    });
+    var description = ui.Label({
+      value: type.label,
+      style: {margin: '0 0 4px 6px'}
+    });
+    
+    var legendRow = ui.Panel({
+      widgets: [colorBox, description],
+      layout: ui.Panel.Layout.flow('horizontal')
+    });
+    
+    legend.add(legendRow);
+  });
+
+  return legend;
+}
+
+// Add the legend to the map
+Map.add(createLegend());
